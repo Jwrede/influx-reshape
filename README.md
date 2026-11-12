@@ -170,8 +170,9 @@ and `SHOW FIELD KEYS FROM sensors` lists only `temperature float`.
   conflicting fields, rule checks, windows, flag parsing.
 - `IR_URL=http://127.0.0.1:8086 go test -run E2E -v ./...` runs against a
   real server (for 2.x also `IR_DB`, `IR_TOKEN`, `IR_ORG`). CI runs it
-  against InfluxDB 1.8, 1.11, 2.7 and the latest 2.x image, and weekly on
-  Mondays. Locally it passed on 1.11.8 and 2.7.12. The scenarios: rename
+  against InfluxDB 1.8, 1.11, 2.7 and the latest 2.x image (on 2026-11-12:
+  1.8.10, 1.11.8, 2.7.12, 2.9.1), and weekly on Mondays. Locally it passed
+  on 1.11.8 and 2.7.12. The scenarios: rename
   tag, rename and drop field and change a tag value in place over several
   windows, with escaped keys and values, an empty string, booleans and an
   integer above 2^53, checked point by point and against `SHOW FIELD KEYS`;
