@@ -31,6 +31,7 @@ changes (repeatable):
   --rename-tag OLD=NEW        --drop-tag KEY       --tag-value KEY:OLD=NEW
   --rename-field OLD=NEW      --drop-field KEY     --cast FIELD=TYPE
                               (TYPE: float, integer, unsigned, string, boolean)
+  --tag-to-field KEY          --field-to-tag KEY
 
 apply:
   --yes                required; apply drops and rewrites data
@@ -72,7 +73,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&c.Token, "token", os.Getenv("INFLUX_TOKEN"), "")
 	fs.StringVar(&c.Org, "org", os.Getenv("INFLUX_ORG"), "")
 	var m, renameM, state, backup string
-	var renameTag, dropTag, tagValue, renameField, dropField, cast multi
+	var renameTag, dropTag, tagValue, renameField, dropField, cast, tagToField, fieldToTag multi
 	var yes, scan, allowCollisions bool
 	var window time.Duration
 	var batch int
@@ -85,6 +86,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&renameField, "rename-field", "")
 	fs.Var(&dropField, "drop-field", "")
 	fs.Var(&cast, "cast", "")
+	fs.Var(&tagToField, "tag-to-field", "")
+	fs.Var(&fieldToTag, "field-to-tag", "")
 	fs.BoolVar(&yes, "yes", false, "")
 	fs.BoolVar(&scan, "scan", false, "")
 	fs.BoolVar(&allowCollisions, "allow-collisions", false, "")
@@ -100,6 +103,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	r, err := buildRules(renameM, renameTag, dropTag, tagValue, renameField, dropField, cast)
+	if err == nil {
+		for _, k := range tagToField {
+			r.TagToField[k] = true
+		}
+		for _, k := range fieldToTag {
+			r.FieldToTag[k] = true
+		}
+	}
 	if err == nil && (c.DB == "" || m == "") {
 		err = errors.New("--db and -m are required")
 	}

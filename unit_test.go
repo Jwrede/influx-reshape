@@ -127,7 +127,7 @@ func TestCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.RenameField["a"] = "b"
-	if err := r.Check(schema()); err == nil || !strings.Contains(err.Error(), `would both be called "b"`) {
+	if err := r.Check(schema()); err == nil || !strings.Contains(err.Error(), `would both become field "b"`) {
 		t.Fatalf("field rename collision not reported: %v", err)
 	}
 	r.RenameField["b"] = "bb" // b moves away, so a may take its name
@@ -197,5 +197,40 @@ func TestBuildRules(t *testing.T) {
 	}
 	if _, err := buildRules("", []string{"novalue"}, nil, nil, nil, nil, nil); err == nil {
 		t.Fatal("bad --rename-tag accepted")
+	}
+}
+
+func TestConvert(t *testing.T) {
+	r := NewRules()
+	r.TagToField["region"] = true
+	r.FieldToTag["b"] = true
+	if err := r.Check(schema()); err == nil || !strings.Contains(err.Error(), `field "c" has several types`) {
+		t.Fatalf("got %v", err)
+	}
+	r.Cast["c"] = tFloat
+	if err := r.Check(schema()); err != nil {
+		t.Fatal(err)
+	}
+	r.FieldToTag["a"] = true
+	r.RenameTag["host"] = "a"
+	if err := r.Check(schema()); err == nil || !strings.Contains(err.Error(), `would both become tag "a"`) {
+		t.Fatalf("tag collision not reported: %v", err)
+	}
+	delete(r.RenameTag, "host")
+	delete(r.FieldToTag, "a")
+	p := &Point{
+		Tags:   map[string]string{"host": "h", "region": "eu"},
+		Fields: []FieldValue{{Key: "a", Value: Value{Type: tFloat, Num: "1"}}, {Key: "b", Value: Value{Type: tInteger, Num: "42"}}},
+		Time:   "5",
+	}
+	if keep, err := r.Apply(p, "m"); err != nil || !keep {
+		t.Fatal(keep, err)
+	}
+	if got, want := string(AppendLine(nil, p)), "m,b=42,host=h a=1,region=\"eu\" 5\n"; got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	only := &Point{Tags: map[string]string{}, Fields: []FieldValue{{Key: "b", Value: Value{Type: tInteger, Num: "1"}}}, Time: "7"}
+	if _, err := r.Apply(only, "m"); err == nil {
+		t.Fatal("point without fields after field-to-tag accepted")
 	}
 }

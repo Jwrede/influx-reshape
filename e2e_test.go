@@ -371,3 +371,32 @@ func TestE2EVolume(t *testing.T) {
 		t.Fatalf("missing %q", want)
 	}
 }
+
+func TestE2EConvert(t *testing.T) {
+	e := setup(t)
+	m := e.name("conv")
+	e.write(fmt.Sprintf(`%[1]s,host=a,unit=C temp=20.5,status="ok",code=3i %[2]d
+%[1]s,host=a,unit=F temp=70,status="warn",code=4i %[3]d
+%[1]s,host=b temp=19,code=3i %[4]d
+`, m, day, 2*day, 3*day))
+	e.run(0, "apply", "-m", m, "--tag-to-field", "unit", "--field-to-tag", "status", "--field-to-tag", "code", "--yes")
+	e.equal(e.dump(m),
+		fmt.Sprintf(`%s,code=3,host=a,status=ok temp=20.5,unit="C" %d`, m, day),
+		fmt.Sprintf(`%s,code=4,host=a,status=warn temp=70,unit="F" %d`, m, 2*day),
+		fmt.Sprintf(`%s,code=3,host=b temp=19 %d`, m, 3*day),
+	)
+	s, err := (&Job{C: e.c}).Schema(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(s.Tags, ",") != "code,host,status" || s.FieldTypes["unit"][0] != tString || len(s.Fields) != 2 {
+		t.Fatalf("schema after conversion: %+v", s)
+	}
+	// A point whose only field would become a tag is refused before writing.
+	m2 := e.name("conv2")
+	e.write(fmt.Sprintf("%[1]s,host=a v=1i,s=\"x\" %[2]d\n%[1]s,host=b s=\"y\" %[3]d\n", m2, day, 2*day))
+	out := e.run(1, "plan", "-m", m2, "--field-to-tag", "s", "--scan")
+	if !strings.Contains(out, "no field left after turning fields into tags") {
+		t.Fatalf("plan --scan output:\n%s", out)
+	}
+}

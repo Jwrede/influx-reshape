@@ -95,6 +95,8 @@ Changes (all repeatable, combinable in one run):
 | `--rename-field OLD=NEW` | rename a field key |
 | `--drop-field KEY` | remove a field; points without fields disappear |
 | `--cast FIELD=TYPE` | convert to `float`, `integer`, `unsigned`, `string` or `boolean` |
+| `--tag-to-field KEY` | turn a tag into a string field with the same key (series merge) |
+| `--field-to-tag KEY` | turn a field into a tag with the same key; the value becomes its text |
 
 Safety checks before anything is written: every rule must name an existing
 key; renames must not land on a key that stays; a field with several types
@@ -104,7 +106,11 @@ policy, because `DROP MEASUREMENT` deletes it in all retention policies of
 the database. Casts are strict: `1.5` to integer, `"abc"` to float or `2`
 to boolean stop the run.
 
-Collisions: when `--drop-tag` or `--tag-value` makes two points share a
+A point whose only field is turned into a tag would have no field left;
+that stops the run as well (`plan --scan` finds it beforehand).
+
+Collisions: when `--drop-tag`, `--tag-value` or `--tag-to-field` makes two
+points share a
 series and a timestamp, InfluxDB would keep only the last value of each
 field. The copy detects that and stops; `--allow-collisions` accepts it
 (the count check then expects the merged numbers).
@@ -184,7 +190,10 @@ and `SHOW FIELD KEYS FROM sensors` lists only `temperature float`.
   merged with `--allow-collisions`); resume after a failed window; refusal
   of a non-empty staging measurement, of `apply` without `--yes` and, on
   1.x, of a measurement that also exists in another retention policy;
-  24000 points in 40 series with several chunks and write batches.
+  tags turned into fields and fields into tags, with a check of
+  `SHOW TAG KEYS` and `SHOW FIELD KEYS` afterwards, and a point that would
+  lose its last field; 24000 points in 40 series with several chunks and
+  write batches.
 
 The integration tests found two errors that unit tests did not show: the
 time range came from `SELECT * ... LIMIT 1`, which skipped the last point
@@ -206,7 +215,7 @@ whole float of a conflicting field as an integer.
   backup writes all values of such a field as floats (exact up to 2^53).
 - Collision detection keeps one entry per point of the current window in
   memory; use a smaller `--window` for very dense measurements with
-  `--drop-tag` or `--tag-value`.
+  `--drop-tag`, `--tag-value` or `--tag-to-field`.
 - Only one measurement per run, no `WHERE` filter for partial rewrites, no
   continuous queries or retention policies are changed.
 - InfluxDB 3 is not supported (the tool refuses it).

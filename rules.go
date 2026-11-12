@@ -15,6 +15,8 @@ type Rules struct {
 	RenameField       map[string]string            // old key -> new key
 	DropField         map[string]bool
 	Cast              map[string]string // source field key -> type
+	TagToField        map[string]bool   // tag becomes a string field with the same key
+	FieldToTag        map[string]bool   // field becomes a tag with the same key
 }
 
 func NewRules() *Rules {
@@ -25,18 +27,21 @@ func NewRules() *Rules {
 		RenameField: map[string]string{},
 		DropField:   map[string]bool{},
 		Cast:        map[string]string{},
+		TagToField:  map[string]bool{},
+		FieldToTag:  map[string]bool{},
 	}
 }
 
 func (r *Rules) Empty() bool {
 	return r.RenameMeasurement == "" && len(r.RenameTag) == 0 && len(r.DropTag) == 0 && len(r.TagValue) == 0 &&
-		len(r.RenameField) == 0 && len(r.DropField) == 0 && len(r.Cast) == 0
+		len(r.RenameField) == 0 && len(r.DropField) == 0 && len(r.Cast) == 0 &&
+		len(r.TagToField) == 0 && len(r.FieldToTag) == 0
 }
 
 // MergesSeries reports whether two source points can end up with the same
 // series key and timestamp, so the copy must look for collisions.
 func (r *Rules) MergesSeries() bool {
-	return len(r.DropTag) > 0 || len(r.TagValue) > 0
+	return len(r.DropTag) > 0 || len(r.TagValue) > 0 || len(r.TagToField) > 0
 }
 
 // Describe lists the rules in a stable order, one per line.
@@ -64,6 +69,12 @@ func (r *Rules) Describe(src string) []string {
 	}
 	for _, k := range sortedKeys(r.Cast) {
 		out = append(out, fmt.Sprintf("cast field %q to %s", k, r.Cast[k]))
+	}
+	for _, k := range sortedKeys(r.TagToField) {
+		out = append(out, fmt.Sprintf("turn tag %q into a string field", k))
+	}
+	for _, k := range sortedKeys(r.FieldToTag) {
+		out = append(out, fmt.Sprintf("turn field %q into a tag", k))
 	}
 	return out
 }
@@ -147,36 +158,62 @@ func (r *Rules) Check(s *Schema) error {
 		}
 	}
 	for _, f := range s.Fields {
-		if len(s.FieldTypes[f]) > 1 && !r.DropField[f] && r.Cast[f] == "" {
+		if len(s.FieldTypes[f]) > 1 && !r.DropField[f] && r.Cast[f] == "" && !r.FieldToTag[f] {
 			add("field %q has several types (%s); add --cast %s=<type> or --drop-field %s",
 				f, strings.Join(s.FieldTypes[f], ", "), f, f)
 		}
 	}
+	for _, k := range sortedKeys(r.TagToField) {
+		if !s.hasTag(k) {
+			add("tag to field: no tag %q", k)
+		}
+		if _, ok := r.RenameTag[k]; ok || r.DropTag[k] {
+			add("tag %q is turned into a field and also renamed or dropped", k)
+		}
+	}
+	for _, k := range sortedKeys(r.FieldToTag) {
+		if _, ok := s.FieldTypes[k]; !ok {
+			add("field to tag: no field %q", k)
+		}
+		if _, ok := r.RenameField[k]; ok || r.DropField[k] || r.Cast[k] != "" {
+			add("field %q is turned into a tag and also renamed, dropped or cast", k)
+		}
+	}
 	// Output keys must be unique among tags and among fields. A tag and a
-	// field may already share a key in existing data; only a rename that
+	// field may already share a key in existing data; only a change that
 	// creates such a pair is refused.
-	tagOwner, fieldOwner := map[string]string{}, map[string]string{}
+	type origin struct{ what, key string }
+	tagOwner, fieldOwner := map[string]origin{}, map[string]origin{}
+	claim := func(owner map[string]origin, kind, out string, o origin) {
+		if prev, ok := owner[out]; ok {
+			add("%s %q and %s %q would both become %s %q", prev.what, prev.key, o.what, o.key, kind, out)
+			return
+		}
+		owner[out] = o
+	}
 	for _, t := range s.Tags {
-		if r.DropTag[t] {
-			continue
+		switch {
+		case r.DropTag[t]:
+		case r.TagToField[t]:
+			claim(fieldOwner, "field", t, origin{"tag", t})
+		default:
+			claim(tagOwner, "tag", r.tagKey(t), origin{"tag", t})
 		}
-		out := r.tagKey(t)
-		if prev, ok := tagOwner[out]; ok {
-			add("tags %q and %q would both be called %q", prev, t, out)
-		}
-		tagOwner[out] = t
 	}
 	for _, f := range s.Fields {
-		if r.DropField[f] {
-			continue
+		switch {
+		case r.DropField[f]:
+		case r.FieldToTag[f]:
+			claim(tagOwner, "tag", f, origin{"field", f})
+		default:
+			claim(fieldOwner, "field", r.fieldKey(f), origin{"field", f})
 		}
-		out := r.fieldKey(f)
-		if prev, ok := fieldOwner[out]; ok {
-			add("fields %q and %q would both be called %q", prev, f, out)
-		}
-		fieldOwner[out] = f
-		if t, ok := tagOwner[out]; ok && (t != out || f != out) {
-			add("tag %q and field %q would both be called %q", t, f, out)
+	}
+	for _, out := range sortedKeys(tagOwner) {
+		t, ok := fieldOwner[out]
+		tg := tagOwner[out]
+		if ok && !(tg.what == "tag" && tg.key == out && t.what == "field" && t.key == out) {
+			add("%s %q and %s %q would both be called %q", tg.what, tg.key, t.what, t.key, out)
 		}
 	}
 	if len(errs) > 0 {
@@ -202,8 +239,13 @@ func (r *Rules) fieldKey(k string) string {
 // OutputFields maps every kept source field to its output key and type.
 func (r *Rules) OutputFields(s *Schema) map[string]string {
 	out := map[string]string{}
+	for _, t := range s.Tags {
+		if r.TagToField[t] {
+			out[t] = tString
+		}
+	}
 	for _, f := range s.Fields {
-		if r.DropField[f] {
+		if r.DropField[f] || r.FieldToTag[f] {
 			continue
 		}
 		typ := s.FieldTypes[f][0]
@@ -219,9 +261,11 @@ func (r *Rules) OutputFields(s *Schema) map[string]string {
 // case the point disappears (only possible when fields are dropped).
 func (r *Rules) Apply(p *Point, measurement string) (bool, error) {
 	p.Measurement = measurement
-	if len(r.DropTag)+len(r.RenameTag)+len(r.TagValue) > 0 {
+	var fromTags []FieldValue
+	if len(r.DropTag)+len(r.RenameTag)+len(r.TagValue)+len(r.TagToField)+len(r.FieldToTag) > 0 {
 		tags := make(map[string]string, len(p.Tags))
-		for k, v := range p.Tags {
+		for _, k := range sortedKeys(p.Tags) {
+			v := p.Tags[k]
 			if v == "" || r.DropTag[k] {
 				continue
 			}
@@ -233,13 +277,25 @@ func (r *Rules) Apply(p *Point, measurement string) (bool, error) {
 			if v == "" {
 				continue
 			}
+			if r.TagToField[k] {
+				fromTags = append(fromTags, FieldValue{Key: k, Value: Value{Type: tString, Str: v}})
+				continue
+			}
 			tags[r.tagKey(k)] = v
 		}
 		p.Tags = tags
 	}
 	fields := p.Fields[:0]
+	converted := false
 	for _, f := range p.Fields {
 		if r.DropField[f.Key] {
+			continue
+		}
+		if r.FieldToTag[f.Key] {
+			if s := tagText(f.Value); s != "" {
+				p.Tags[f.Key] = s
+			}
+			converted = true
 			continue
 		}
 		if to := r.Cast[f.Key]; to != "" {
@@ -252,8 +308,22 @@ func (r *Rules) Apply(p *Point, measurement string) (bool, error) {
 		f.Key = r.fieldKey(f.Key)
 		fields = append(fields, f)
 	}
-	p.Fields = fields
-	return len(fields) > 0, nil
+	p.Fields = append(fields, fromTags...)
+	if len(p.Fields) == 0 && converted {
+		return false, fmt.Errorf("point at %s has no field left after turning fields into tags", p.Time)
+	}
+	return len(p.Fields) > 0, nil
+}
+
+// tagText formats a field value as a tag value.
+func tagText(v Value) string {
+	switch v.Type {
+	case tString:
+		return v.Str
+	case tBoolean:
+		return fmt.Sprint(v.Bool)
+	}
+	return v.Num
 }
 
 // seriesKey identifies a series independent of tag order.
