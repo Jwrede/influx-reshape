@@ -234,3 +234,24 @@ func TestConvert(t *testing.T) {
 		t.Fatal("point without fields after field-to-tag accepted")
 	}
 }
+
+func TestFieldIntoExistingTag(t *testing.T) {
+	s := &Schema{Fields: []string{"temp", "loc"}, FieldTypes: map[string][]string{"temp": {tFloat}, "loc": {tString}}, Tags: []string{"host", "loc"}}
+	r := NewRules()
+	r.FieldToTag["loc"] = true
+	if err := r.Check(s); err != nil {
+		t.Fatal(err)
+	}
+	p := &Point{Tags: map[string]string{"host": "a"}, Fields: []FieldValue{{Key: "temp", Value: Value{Type: tFloat, Num: "1"}}, {Key: "loc", Value: Value{Type: tString, Str: "kitchen"}}}, Time: "1"}
+	if _, err := r.Apply(p, "m"); err != nil || p.Tags["loc"] != "kitchen" || len(p.Fields) != 1 {
+		t.Fatalf("got %+v, %v", p, err)
+	}
+	same := &Point{Tags: map[string]string{"loc": "x"}, Fields: []FieldValue{{Key: "temp", Value: Value{Type: tFloat, Num: "1"}}, {Key: "loc", Value: Value{Type: tString, Str: "x"}}}, Time: "2"}
+	if _, err := r.Apply(same, "m"); err != nil {
+		t.Fatal(err)
+	}
+	diff := &Point{Tags: map[string]string{"loc": "x"}, Fields: []FieldValue{{Key: "temp", Value: Value{Type: tFloat, Num: "1"}}, {Key: "loc", Value: Value{Type: tString, Str: "y"}}}, Time: "3"}
+	if _, err := r.Apply(diff, "m"); err == nil || !strings.Contains(err.Error(), `tag loc="x" and field loc="y"`) {
+		t.Fatalf("differing values accepted: %v", err)
+	}
+}

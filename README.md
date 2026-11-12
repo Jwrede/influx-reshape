@@ -96,7 +96,7 @@ Changes (all repeatable, combinable in one run):
 | `--drop-field KEY` | remove a field; points without fields disappear |
 | `--cast FIELD=TYPE` | convert to `float`, `integer`, `unsigned`, `string` or `boolean` |
 | `--tag-to-field KEY` | turn a tag into a string field with the same key (series merge) |
-| `--field-to-tag KEY` | turn a field into a tag with the same key; the value becomes its text |
+| `--field-to-tag KEY` | turn a field into a tag with the same key; the value becomes its text. If a tag with that key exists (a key written as a field by mistake), the field fills the tag; a point with differing tag and field values stops the run |
 
 Safety checks before anything is written: every rule must name an existing
 key; renames must not land on a key that stays; a field with several types
@@ -192,7 +192,8 @@ and `SHOW FIELD KEYS FROM sensors` lists only `temperature float`.
   1.x, of a measurement that also exists in another retention policy;
   tags turned into fields and fields into tags, with a check of
   `SHOW TAG KEYS` and `SHOW FIELD KEYS` afterwards, and a point that would
-  lose its last field; 24000 points in 40 series with several chunks and
+  lose its last field; a key that exists as a tag in some points and as a
+  field in others, merged into the tag; 24000 points in 40 series with several chunks and
   write batches.
 
 The integration tests found two errors that unit tests did not show: the

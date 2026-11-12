@@ -204,6 +204,11 @@ func (r *Rules) Check(s *Schema) error {
 		switch {
 		case r.DropField[f]:
 		case r.FieldToTag[f]:
+			// Merging into an existing tag of the same name is allowed;
+			// Apply checks the values point by point.
+			if o, ok := tagOwner[f]; ok && o.what == "tag" && o.key == f {
+				continue
+			}
 			claim(tagOwner, "tag", f, origin{"field", f})
 		default:
 			claim(fieldOwner, "field", r.fieldKey(f), origin{"field", f})
@@ -293,6 +298,10 @@ func (r *Rules) Apply(p *Point, measurement string) (bool, error) {
 		}
 		if r.FieldToTag[f.Key] {
 			if s := tagText(f.Value); s != "" {
+				if old := p.Tags[f.Key]; old != "" && old != s {
+					return false, fmt.Errorf("point at %s has tag %s=%q and field %s=%q; the field cannot become the tag",
+						p.Time, f.Key, old, f.Key, s)
+				}
 				p.Tags[f.Key] = s
 			}
 			converted = true

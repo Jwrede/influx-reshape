@@ -400,3 +400,25 @@ func TestE2EConvert(t *testing.T) {
 		t.Fatalf("plan --scan output:\n%s", out)
 	}
 }
+
+// A key written as a field by mistake, and as a tag elsewhere (#6150).
+func TestE2EFieldIntoExistingTag(t *testing.T) {
+	e := setup(t)
+	m := e.name("loc")
+	e.write(fmt.Sprintf("%[1]s,host=a temp=1,loc=\"kitchen\" %[2]d\n", m, day))
+	e.write(fmt.Sprintf("%[1]s,host=a,loc=office temp=2 %[2]d\n", m, 2*day))
+	s, err := (&Job{C: e.c}).Schema(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.FieldTypes["loc"]; !ok || !s.hasTag("loc") {
+		t.Skipf("server did not keep loc as both tag and field: %+v", s)
+	}
+	e.run(0, "apply", "-m", m, "--field-to-tag", "loc", "--yes")
+	e.equal(e.dump(m),
+		fmt.Sprintf("%s,host=a,loc=kitchen temp=1 %d", m, day),
+		fmt.Sprintf("%s,host=a,loc=office temp=2 %d", m, 2*day))
+	if ft := e.fieldTypes(m); len(ft) != 1 {
+		t.Fatalf("fields after merge: %v", ft)
+	}
+}
