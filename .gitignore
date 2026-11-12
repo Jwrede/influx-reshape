@@ -1,0 +1,4 @@
+/influx-reshape
+*.state.json
+*.state.json.tmp
+*.lp.gz
