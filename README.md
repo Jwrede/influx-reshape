@@ -117,7 +117,10 @@ field. The copy detects that and stops; `--allow-collisions` accepts it
 
 ## Install
 
-Go 1.24 or newer, no dependencies outside the standard library:
+Static binaries for Linux, macOS and Windows are on the
+[releases page](https://github.com/Jwrede/influx-reshape/releases), with
+SHA256 checksums. With Go 1.24 or newer (no dependencies outside the
+standard library):
 
 ```
 go install github.com/Jwrede/influx-reshape@latest
